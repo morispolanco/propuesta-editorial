@@ -25,16 +25,16 @@ def contar_palabras(texto):
     texto_limpio = texto.replace('\n', ' ')
     return len(texto_limpio.split())
 
-# --- NUEVA FUNCIÓN PARA LLAMAR A LA API DE GEMINI CON STREAMING Y BÚSQUEDA ---
-def llamar_api_gemini(mensaje, api_key):
+# --- FUNCIÓN DE API MODIFICADA ---
+# Ahora recibe el cliente como parámetro en lugar de crearlo.
+def llamar_api_gemini(mensaje, client):
     """
     Llama a la API de Gemini con streaming y habilita Google Search.
     """
-    if not api_key:
-        st.error("La API Key de Gemini es necesaria.")
+    if not client:
+        st.error("El cliente de Gemini no está inicializado. Introduce tu API Key.")
         return None
     try:
-        client = genai.Client(api_key=api_key)
         model = "gemini-flash-latest"
         contents = [
             types.Content(
@@ -44,12 +44,10 @@ def llamar_api_gemini(mensaje, api_key):
                 ],
             ),
         ]
-        # Herramienta de Google Search para obtener información verificable y actualizada.
         tools = [
             types.Tool(googleSearch=types.GoogleSearch()),
         ]
         generate_content_config = types.GenerateContentConfig(
-            # thinking_budget permite al modelo "pensar" más antes de responder.
             thinking_config=types.ThinkingConfig(thinking_budget=-1),
             tools=tools,
         )
@@ -75,8 +73,9 @@ def capitalizar_titulo_espanol(titulo):
                 palabras[i] = palabras[i].capitalize()
     return " ".join(palabras)
 
-# --- FUNCIONES DE GENERACIÓN AHORA USAN GEMINI ---
-def generar_tabla_contenidos(propuesta, api_key):
+# --- FUNCIONES DE GENERACIÓN AHORA USAN EL CLIENTE DE LA SESIÓN ---
+def generar_tabla_contenidos(propuesta, client):
+    # ... (el prompt es el mismo)
     prompt = f"""
     Basado en la siguiente propuesta editorial, genera una tabla de contenidos detallada para un libro.
     
@@ -98,9 +97,10 @@ def generar_tabla_contenidos(propuesta, api_key):
     2. [Título del capítulo 2]
     ...
     """
-    return llamar_api_gemini(prompt, api_key)
+    return llamar_api_gemini(prompt, client)
 
-def modificar_tabla_contenidos(propuesta, tabla_actual, cambios_solicitados, api_key):
+def modificar_tabla_contenidos(propuesta, tabla_actual, cambios_solicitados, client):
+    # ... (el prompt es el mismo)
     prompt = f"""
     A continuación, te presento una propuesta editorial y una tabla de contenidos generada previamente.
     
@@ -129,9 +129,10 @@ def modificar_tabla_contenidos(propuesta, tabla_actual, cambios_solicitados, api
     2. [Título del capítulo 2]
     ...
     """
-    return llamar_api_gemini(prompt, api_key)
+    return llamar_api_gemini(prompt, client)
 
-def modificar_capitulo(contenido_actual, titulo_libro, num_capitulo, titulo_capitulo, propuesta, cambios, api_key):
+def modificar_capitulo(contenido_actual, titulo_libro, num_capitulo, titulo_capitulo, propuesta, cambios, client):
+    # ... (el prompt es el mismo)
     prompt = f"""
     Eres un editor experto. A continuación, te presento el capítulo {num_capitulo} de un libro.
     
@@ -157,9 +158,10 @@ def modificar_capitulo(contenido_actual, titulo_libro, num_capitulo, titulo_capi
     - Si incluyes citas, estas deben ser reales y verificables. Usa la búsqueda si es necesario.
     - **CRÍTICO: Asegúrate de que el capítulo esté completo y no termine a mitad de una frase o idea. La respuesta debe ser el capítulo completo, desde el principio hasta el final, sin truncamientos.**
     """
-    return llamar_api_gemini(prompt, api_key)
+    return llamar_api_gemini(prompt, client)
 
-def generar_capitulo(titulo_libro, num_capitulo, titulo_capitulo, propuesta, api_key, capitulos_previos=""):
+def generar_capitulo(titulo_libro, num_capitulo, titulo_capitulo, propuesta, client, capitulos_previos=""):
+    # ... (el prompt es el mismo)
     prompt = f"""
     Escribe el capítulo {num_capitulo} del libro "{titulo_libro}".
     
@@ -181,7 +183,7 @@ def generar_capitulo(titulo_libro, num_capitulo, titulo_capitulo, propuesta, api
     
     Por favor, escribe el capítulo completo sin truncar.
     """
-    return llamar_api_gemini(prompt, api_key)
+    return llamar_api_gemini(prompt, client)
 
 # Función para guardar progreso
 def guardar_progreso(datos):
@@ -233,6 +235,17 @@ st.markdown("Esta aplicación te permite generar libros completos a partir de un
 st.sidebar.header("Configuración")
 api_key = st.sidebar.text_input("Introduce tu API Key de Gemini:", type="password")
 
+# --- LÓGICA CLAVE PARA EL CLIENTE PERSISTENTE ---
+# Crear el cliente y guardarlo en st.session_state si no existe o si la API key cambia.
+if "gemini_client" not in st.session_state or st.session_state.api_key != api_key:
+    if api_key:
+        st.session_state.gemini_client = genai.Client(api_key=api_key)
+        st.session_state.api_key = api_key
+        st.sidebar.success("Cliente de Gemini inicializado.", icon="🤖")
+    else:
+        st.session_state.gemini_client = None
+        st.session_state.api_key = None
+
 st.sidebar.subheader("Progreso del proyecto")
 cargar_proyecto = st.sidebar.file_uploader("Cargar proyecto guardado", type=["json"])
 
@@ -277,18 +290,19 @@ propuesta = st.text_area(
     value=st.session_state.propuesta
 )
 
-if st.button("Analizar Propuesta") and api_key:
+# --- MODIFICACIÓN EN LA LLAMADA ---
+# Ahora pasamos el cliente de la sesión a la función.
+if st.button("Analizar Propuesta") and st.session_state.gemini_client:
     if not propuesta.strip():
         st.error("Por favor, introduce una propuesta editorial válida.")
     else:
         st.session_state.propuesta = propuesta
         placeholder = st.empty()
         full_response = ""
-        stream = generar_tabla_contenidos(propuesta, api_key)
+        stream = generar_tabla_contenidos(propuesta, st.session_state.gemini_client)
         if stream:
             with placeholder.container():
                 st.write("Generando tabla de contenidos...")
-                # --- BUCLE DE STREAMING ACTUALIZADO PARA GEMINI ---
                 for chunk in stream:
                     content = chunk.text or ""
                     full_response += content
@@ -328,11 +342,11 @@ if st.session_state.tabla_contenidos:
             st.rerun()
 
     with col2:
-        if st.button("🔄 Regenerar Tabla de Contenidos") and api_key:
+        if st.button("🔄 Regenerar Tabla de Contenidos") and st.session_state.gemini_client:
             st.session_state.pedir_cambios = False
             placeholder = st.empty()
             full_response = ""
-            stream = generar_tabla_contenidos(st.session_state.propuesta, api_key)
+            stream = generar_tabla_contenidos(st.session_state.propuesta, st.session_state.gemini_client)
             if stream:
                 with placeholder.container():
                     st.write("Regenerando tabla de contenidos...")
@@ -365,7 +379,7 @@ if st.session_state.tabla_contenidos:
             height=150
         )
         
-        if st.button("Aplicar Cambios") and api_key:
+        if st.button("Aplicar Cambios") and st.session_state.gemini_client:
             if not cambios_solicitados.strip():
                 st.error("Por favor, describe los cambios que deseas realizar.")
             else:
@@ -375,7 +389,7 @@ if st.session_state.tabla_contenidos:
                     st.session_state.propuesta,
                     st.session_state.tabla_contenidos,
                     cambios_solicitados,
-                    api_key
+                    st.session_state.gemini_client
                 )
                 if stream:
                     with placeholder.container():
@@ -451,7 +465,7 @@ if st.session_state.tabla_contenidos and "tabla_aprobada" in st.session_state an
                         height=150,
                         key=f"cambios_capitulo_{i}"
                     )
-                    if st.button("🤖 Aplicar Cambios con IA", key=f"apply_ai_{i}") and api_key:
+                    if st.button("🤖 Aplicar Cambios con IA", key=f"apply_ai_{i}") and st.session_state.gemini_client:
                         if not cambios.strip():
                             st.error("Por favor, describe los cambios.")
                         else:
@@ -464,7 +478,7 @@ if st.session_state.tabla_contenidos and "tabla_aprobada" in st.session_state an
                                 titulo_capitulo,
                                 st.session_state.propuesta,
                                 cambios,
-                                api_key
+                                st.session_state.gemini_client
                             )
                             if stream:
                                 with placeholder.container():
@@ -489,7 +503,7 @@ if st.session_state.tabla_contenidos and "tabla_aprobada" in st.session_state an
                     
                     col_regenerar, col_cambios, col_editar = st.columns(3)
                     with col_regenerar:
-                        if st.button("🔄 Regenerar", key=f"regenerar_{i}") and api_key:
+                        if st.button("🔄 Regenerar", key=f"regenerar_{i}") and st.session_state.gemini_client:
                             with st.spinner("Regenerando capítulo..."):
                                 capitulos_previos = "\n\n".join(st.session_state.capitulos[:i] + st.session_state.capitulos[i+1:])
                                 placeholder = st.empty()
@@ -499,7 +513,7 @@ if st.session_state.tabla_contenidos and "tabla_aprobada" in st.session_state an
                                     i + 1,
                                     titulo_capitulo,
                                     st.session_state.propuesta,
-                                    api_key,
+                                    st.session_state.gemini_client,
                                     capitulos_previos
                                 )
                                 if stream:
@@ -525,7 +539,7 @@ if st.session_state.tabla_contenidos and "tabla_aprobada" in st.session_state an
 
             elif i == st.session_state.capitulo_actual:
                 st.subheader(f"Capítulo {i+1}: {titulo_capitulo}")
-                if st.button(f"Generar Capítulo {i+1}", key=f"generar_{i}") and api_key:
+                if st.button(f"Generar Capítulo {i+1}", key=f"generar_{i}") and st.session_state.gemini_client:
                     placeholder = st.empty()
                     full_response = ""
                     capitulos_previos = "\n\n".join(st.session_state.capitulos)
@@ -534,7 +548,7 @@ if st.session_state.tabla_contenidos and "tabla_aprobada" in st.session_state an
                         i + 1,
                         titulo_capitulo,
                         st.session_state.propuesta,
-                        api_key,
+                        st.session_state.gemini_client,
                         capitulos_previos
                     )
                     if stream:
