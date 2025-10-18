@@ -1,11 +1,13 @@
 import streamlit as st
-import requests
-import json
 import os
+import json
 import re
 from datetime import datetime
 import base64
 import markdown
+# Importaciones de la API de Google
+from google import genai
+from google.genai import types
 
 # Configuración de la página
 st.set_page_config(
@@ -23,36 +25,43 @@ def contar_palabras(texto):
     texto_limpio = texto.replace('\n', ' ')
     return len(texto_limpio.split())
 
-@st.cache_data
-def obtener_modelos_gratis(api_key):
+# --- NUEVA FUNCIÓN PARA LLAMAR A LA API DE GEMINI CON STREAMING Y BÚSQUEDA ---
+def llamar_api_gemini(mensaje, api_key):
     """
-    Obtiene la lista de modelos gratuitos disponibles en OpenRouter.
-    Utiliza caché para no hacer la llamada a la API en cada interacción.
+    Llama a la API de Gemini con streaming y habilita Google Search.
     """
     if not api_key:
+        st.error("La API Key de Gemini es necesaria.")
         return None
-    
     try:
-        response = requests.get(
-            url="https://openrouter.ai/api/v1/models",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-            }
+        client = genai.Client(api_key=api_key)
+        model = "gemini-flash-latest"
+        contents = [
+            types.Content(
+                role="user",
+                parts=[
+                    types.Part.from_text(text=mensaje),
+                ],
+            ),
+        ]
+        # Herramienta de Google Search para obtener información verificable y actualizada.
+        tools = [
+            types.Tool(googleSearch=types.GoogleSearch()),
+        ]
+        generate_content_config = types.GenerateContentConfig(
+            # thinking_budget permite al modelo "pensar" más antes de responder.
+            thinking_config=types.ThinkingConfig(thinking_budget=-1),
+            tools=tools,
         )
-        
-        if response.status_code == 200:
-            models_data = response.json()
-            modelos_gratis = {}
-            for model in models_data.get("data", []):
-                pricing = model.get("pricing", {})
-                if pricing.get("prompt") == "0" and pricing.get("completion") == "0":
-                    modelos_gratis[model["name"]] = model["id"]
-            return modelos_gratis
-        else:
-            st.sidebar.warning(f"No se pudieron cargar los modelos: {response.status_code}")
-            return None
+
+        stream = client.models.generate_content_stream(
+            model=model,
+            contents=contents,
+            config=generate_content_config,
+        )
+        return stream
     except Exception as e:
-        st.sidebar.warning(f"Error al conectar con OpenRouter para obtener modelos: {str(e)}")
+        st.error(f"Error al llamar a la API de Gemini: {str(e)}")
         return None
 
 # Función para capitalizar títulos en español
@@ -66,43 +75,8 @@ def capitalizar_titulo_espanol(titulo):
                 palabras[i] = palabras[i].capitalize()
     return " ".join(palabras)
 
-# Función para llamar a la API de OpenRouter
-def llamar_api_openrouter(mensaje, api_key, model="openai/gpt-4o-mini"):
-    try:
-        response = requests.post(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://generador-de-libros.streamlit.app",
-                "X-Title": "Generador de Libros",
-            },
-            data=json.dumps({
-                "model": model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "Eres un asistente experto en escritura y edición de libros. Todas tus respuestas deben estar en español. Sigue estrictamente las instrucciones proporcionadas."
-                    },
-                    {
-                        "role": "user",
-                        "content": mensaje
-                    }
-                ],
-            })
-        )
-        
-        if response.status_code == 200:
-            return response.json()["choices"][0]["message"]["content"]
-        else:
-            st.error(f"Error en la API: {response.status_code} - {response.text}")
-            return None
-    except Exception as e:
-        st.error(f"Error al llamar a la API: {str(e)}")
-        return None
-
-# Función para generar tabla de contenidos
-def generar_tabla_contenidos(propuesta, api_key, model):
+# --- FUNCIONES DE GENERACIÓN AHORA USAN GEMINI ---
+def generar_tabla_contenidos(propuesta, api_key):
     prompt = f"""
     Basado en la siguiente propuesta editorial, genera una tabla de contenidos detallada para un libro.
     
@@ -124,12 +98,9 @@ def generar_tabla_contenidos(propuesta, api_key, model):
     2. [Título del capítulo 2]
     ...
     """
-    
-    respuesta = llamar_api_openrouter(prompt, api_key, model)
-    return respuesta
+    return llamar_api_gemini(prompt, api_key)
 
-# Función para modificar la tabla de contenidos según los cambios del usuario
-def modificar_tabla_contenidos(propuesta, tabla_actual, cambios_solicitados, api_key, model):
+def modificar_tabla_contenidos(propuesta, tabla_actual, cambios_solicitados, api_key):
     prompt = f"""
     A continuación, te presento una propuesta editorial y una tabla de contenidos generada previamente.
     
@@ -158,11 +129,9 @@ def modificar_tabla_contenidos(propuesta, tabla_actual, cambios_solicitados, api
     2. [Título del capítulo 2]
     ...
     """
-    
-    respuesta = llamar_api_openrouter(prompt, api_key, model)
-    return respuesta
+    return llamar_api_gemini(prompt, api_key)
 
-def modificar_capitulo(contenido_actual, titulo_libro, num_capitulo, titulo_capitulo, propuesta, cambios, api_key, model):
+def modificar_capitulo(contenido_actual, titulo_libro, num_capitulo, titulo_capitulo, propuesta, cambios, api_key):
     prompt = f"""
     Eres un editor experto. A continuación, te presento el capítulo {num_capitulo} de un libro.
     
@@ -185,15 +154,12 @@ def modificar_capitulo(contenido_actual, titulo_libro, num_capitulo, titulo_capi
     Requisitos:
     - Mantén la extensión del capítulo entre 2000 y 2500 palabras.
     - El contenido modificado debe ser coherente con el resto del libro.
-    - Si incluyes citas, estas deben ser reales y verificables.
+    - Si incluyes citas, estas deben ser reales y verificables. Usa la búsqueda si es necesario.
     - **CRÍTICO: Asegúrate de que el capítulo esté completo y no termine a mitad de una frase o idea. La respuesta debe ser el capítulo completo, desde el principio hasta el final, sin truncamientos.**
     """
-    
-    respuesta = llamar_api_openrouter(prompt, api_key, model)
-    return respuesta
+    return llamar_api_gemini(prompt, api_key)
 
-# Función para generar un capítulo
-def generar_capitulo(titulo_libro, num_capitulo, titulo_capitulo, propuesta, api_key, model, capitulos_previos=""):
+def generar_capitulo(titulo_libro, num_capitulo, titulo_capitulo, propuesta, api_key, capitulos_previos=""):
     prompt = f"""
     Escribe el capítulo {num_capitulo} del libro "{titulo_libro}".
     
@@ -205,7 +171,7 @@ def generar_capitulo(titulo_libro, num_capitulo, titulo_capitulo, propuesta, api
     Requisitos:
     - El capítulo debe tener entre 2000 y 2500 palabras.
     - El contenido debe ser coherente con la propuesta editorial y el título del capítulo.
-    - Si incluyes citas, estas deben ser reales y verificables. No inventes citas.
+    - Si incluyes citas, estas deben ser reales y verificables. Usa la búsqueda de Google para encontrar y verificar información si es necesario.
     - Mantén un estilo consistente con el resto del libro.
     - Escribe completamente en español.
     - **CRÍTICO: Asegúrate de que el capítulo esté completo y no termine a mitad de una frase o idea. La respuesta debe ser el capítulo completo, desde el principio hasta el final, sin truncamientos.**
@@ -215,11 +181,8 @@ def generar_capitulo(titulo_libro, num_capitulo, titulo_capitulo, propuesta, api
     
     Por favor, escribe el capítulo completo sin truncar.
     """
-    
-    respuesta = llamar_api_openrouter(prompt, api_key, model)
-    return respuesta
+    return llamar_api_gemini(prompt, api_key)
 
-# --- FUNCIÓN DE GUARDADO MODIFICADA ---
 # Función para guardar progreso
 def guardar_progreso(datos):
     if not os.path.exists("proyectos_guardados"):
@@ -231,7 +194,6 @@ def guardar_progreso(datos):
     with open(nombre_archivo, "w", encoding="utf-8") as f:
         json.dump(datos, f, ensure_ascii=False, indent=2)
     
-    # --- NUEVO: Notificación de guardado ---
     st.toast("Progreso guardado automáticamente.", icon="💾")
     return nombre_archivo
 
@@ -265,39 +227,11 @@ def crear_enlace_descarga(contenido, nombre_archivo):
 
 # Interfaz de usuario
 st.title("📚 Generador de Libros a partir de Propuestas Editoriales")
-st.markdown("Esta aplicación te permite generar libros completos a partir de una propuesta editorial.")
+st.markdown("Esta aplicación te permite generar libros completos a partir de una propuesta editorial utilizando la API de Gemini con Google Search.")
 
 # Barra lateral para configuración
 st.sidebar.header("Configuración")
-api_key = st.sidebar.text_input("Introduce tu API Key de OpenRouter:", type="password")
-
-modelos_dict = None
-selected_model_id = None
-
-if api_key:
-    modelos_dict = obtener_modelos_gratis(api_key)
-    
-    if modelos_dict:
-        selected_model_name = st.sidebar.selectbox(
-            "Selecciona un modelo gratuito:",
-            options=list(modelos_dict.keys())
-        )
-        selected_model_id = modelos_dict[selected_model_name]
-    else:
-        st.sidebar.warning("No se pudieron cargar los modelos dinámicamente. Usando lista de respaldo.")
-        fallback_models = {
-            "Meta Llama 3 8B Instruct": "meta-llama/llama-3-8b-instruct:free",
-            "Mistral 7B Instruct": "mistralai/mistral-7b-instruct:free",
-            "OpenAI GPT-3.5 Turbo": "openai/gpt-3.5-turbo"
-        }
-        selected_model_name = st.sidebar.selectbox(
-            "Selecciona un modelo (lista de respaldo):",
-            options=list(fallback_models.keys())
-        )
-        selected_model_id = fallback_models[selected_model_name]
-else:
-    st.sidebar.info("Introduce tu API Key para ver los modelos disponibles.")
-
+api_key = st.sidebar.text_input("Introduce tu API Key de Gemini:", type="password")
 
 st.sidebar.subheader("Progreso del proyecto")
 cargar_proyecto = st.sidebar.file_uploader("Cargar proyecto guardado", type=["json"])
@@ -343,30 +277,33 @@ propuesta = st.text_area(
     value=st.session_state.propuesta
 )
 
-if st.button("Analizar Propuesta") and api_key and selected_model_id:
+if st.button("Analizar Propuesta") and api_key:
     if not propuesta.strip():
         st.error("Por favor, introduce una propuesta editorial válida.")
     else:
         st.session_state.propuesta = propuesta
-        with st.spinner("Generando tabla de contenidos..."):
-            st.session_state.tabla_contenidos = generar_tabla_contenidos(propuesta, api_key, selected_model_id)
+        placeholder = st.empty()
+        full_response = ""
+        stream = generar_tabla_contenidos(propuesta, api_key)
+        if stream:
+            with placeholder.container():
+                st.write("Generando tabla de contenidos...")
+                # --- BUCLE DE STREAMING ACTUALIZADO PARA GEMINI ---
+                for chunk in stream:
+                    content = chunk.text or ""
+                    full_response += content
+                    st.markdown(full_response + "▌")
+            placeholder.markdown(full_response)
+            st.session_state.tabla_contenidos = full_response
             
             if "Título del libro:" in st.session_state.tabla_contenidos:
                 titulo_match = re.search(r"Título del libro: (.+)", st.session_state.tabla_contenidos)
                 if titulo_match:
                     st.session_state.titulo_libro = capitalizar_titulo_espanol(titulo_match.group(1).strip())
             
-            datos_proyecto = {
-                "propuesta": st.session_state.propuesta,
-                "tabla_contenidos": st.session_state.tabla_contenidos,
-                "titulo_libro": st.session_state.titulo_libro,
-                "capitulos": st.session_state.capitulos,
-                "capitulo_actual": st.session_state.capitulo_actual
-            }
-            guardar_progreso(datos_proyecto)
-        
-        st.success("Tabla de contenidos generada correctamente.")
-        st.rerun()
+            guardar_progreso(st.session_state.to_dict())
+            st.success("Tabla de contenidos generada correctamente.")
+            st.rerun()
 
 # Sección 2: Revisión de la tabla de contenidos
 if st.session_state.tabla_contenidos:
@@ -391,27 +328,29 @@ if st.session_state.tabla_contenidos:
             st.rerun()
 
     with col2:
-        if st.button("🔄 Regenerar Tabla de Contenidos") and api_key and selected_model_id:
+        if st.button("🔄 Regenerar Tabla de Contenidos") and api_key:
             st.session_state.pedir_cambios = False
-            with st.spinner("Regenerando tabla de contenidos..."):
-                st.session_state.tabla_contenidos = generar_tabla_contenidos(st.session_state.propuesta, api_key, selected_model_id)
+            placeholder = st.empty()
+            full_response = ""
+            stream = generar_tabla_contenidos(st.session_state.propuesta, api_key)
+            if stream:
+                with placeholder.container():
+                    st.write("Regenerando tabla de contenidos...")
+                    for chunk in stream:
+                        content = chunk.text or ""
+                        full_response += content
+                        st.markdown(full_response + "▌")
+                placeholder.markdown(full_response)
+                st.session_state.tabla_contenidos = full_response
                 
                 if "Título del libro:" in st.session_state.tabla_contenidos:
                     titulo_match = re.search(r"Título del libro: (.+)", st.session_state.tabla_contenidos)
                     if titulo_match:
                         st.session_state.titulo_libro = capitalizar_titulo_espanol(titulo_match.group(1).strip())
                 
-                datos_proyecto = {
-                    "propuesta": st.session_state.propuesta,
-                    "tabla_contenidos": st.session_state.tabla_contenidos,
-                    "titulo_libro": st.session_state.titulo_libro,
-                    "capitulos": st.session_state.capitulos,
-                    "capitulo_actual": st.session_state.capitulo_actual
-                }
-                guardar_progreso(datos_proyecto)
-            
-            st.success("Tabla de contenidos regenerada.")
-            st.rerun()
+                guardar_progreso(st.session_state.to_dict())
+                st.success("Tabla de contenidos regenerada.")
+                st.rerun()
     
     with col3:
         if st.button("✏️ Pedir Cambios"):
@@ -426,39 +365,39 @@ if st.session_state.tabla_contenidos:
             height=150
         )
         
-        if st.button("Aplicar Cambios") and api_key and selected_model_id:
+        if st.button("Aplicar Cambios") and api_key:
             if not cambios_solicitados.strip():
                 st.error("Por favor, describe los cambios que deseas realizar.")
             else:
-                with st.spinner("Aplicando cambios..."):
-                    st.session_state.tabla_contenidos = modificar_tabla_contenidos(
-                        st.session_state.propuesta,
-                        st.session_state.tabla_contenidos,
-                        cambios_solicitados,
-                        api_key,
-                        selected_model_id
-                    )
+                placeholder = st.empty()
+                full_response = ""
+                stream = modificar_tabla_contenidos(
+                    st.session_state.propuesta,
+                    st.session_state.tabla_contenidos,
+                    cambios_solicitados,
+                    api_key
+                )
+                if stream:
+                    with placeholder.container():
+                        st.write("Aplicando cambios...")
+                        for chunk in stream:
+                            content = chunk.text or ""
+                            full_response += content
+                            st.markdown(full_response + "▌")
+                    placeholder.markdown(full_response)
+                    st.session_state.tabla_contenidos = full_response
                     
                     if "Título del libro:" in st.session_state.tabla_contenidos:
                         titulo_match = re.search(r"Título del libro: (.+)", st.session_state.tabla_contenidos)
                         if titulo_match:
                             st.session_state.titulo_libro = capitalizar_titulo_espanol(titulo_match.group(1).strip())
                     
-                    datos_proyecto = {
-                        "propuesta": st.session_state.propuesta,
-                        "tabla_contenidos": st.session_state.tabla_contenidos,
-                        "titulo_libro": st.session_state.titulo_libro,
-                        "capitulos": st.session_state.capitulos,
-                        "capitulo_actual": st.session_state.capitulo_actual
-                    }
-                    guardar_progreso(datos_proyecto)
-                
-                st.success("Cambios aplicados correctamente. Revisa la nueva tabla de contenidos.")
-                st.session_state.pedir_cambios = False
-                st.rerun()
+                    guardar_progreso(st.session_state.to_dict())
+                    st.success("Cambios aplicados correctamente. Revisa la nueva tabla de contenidos.")
+                    st.session_state.pedir_cambios = False
+                    st.rerun()
 
-# --- SECCIÓN 3 MODIFICADA PARA EDICIÓN NO LINEAL ---
-# Sección 3: Generación y Revisión de Capítulos
+# Sección 3: Gestión de Capítulos
 if st.session_state.tabla_contenidos and "tabla_aprobada" in st.session_state and st.session_state.tabla_aprobada:
     st.header("3. Gestión de Capítulos")
     
@@ -476,11 +415,9 @@ if st.session_state.tabla_contenidos and "tabla_aprobada" in st.session_state an
         st.progress(st.session_state.capitulo_actual / len(titulos_capitulos))
         st.write(f"Progreso: {st.session_state.capitulo_actual} de {len(titulos_capitulos)} capítulos completados.")
         
-        # Iterar sobre todos los capítulos para mostrar su estado
         for i, titulo_capitulo in enumerate(titulos_capitulos):
             st.markdown(f"---")
             
-            # Si el capítulo ya existe, mostrarlo y sus opciones
             if i < len(st.session_state.capitulos):
                 contenido_capitulo = st.session_state.capitulos[i]
                 word_count = contar_palabras(contenido_capitulo)
@@ -488,7 +425,6 @@ if st.session_state.tabla_contenidos and "tabla_aprobada" in st.session_state an
                 st.subheader(f"Capítulo {i+1}: {titulo_capitulo}")
                 st.write(f"**Palabras generadas:** {word_count} (Objetivo: 2000-2500)")
 
-                # Modo de Edición Manual
                 if st.session_state.editando_capitulo_idx == i:
                     contenido_editado = st.text_area(
                         "Edita el contenido del capítulo:",
@@ -509,61 +445,72 @@ if st.session_state.tabla_contenidos and "tabla_aprobada" in st.session_state an
                             st.session_state.editando_capitulo_idx = -1
                             st.rerun()
                 
-                # Modo de Pedir Cambios con IA
                 elif st.session_state.pidiendo_cambios_capitulo_idx == i:
                     cambios = st.text_area(
                         "Describe los cambios que quieres que la IA realice en este capítulo:",
                         height=150,
                         key=f"cambios_capitulo_{i}"
                     )
-                    if st.button("🤖 Aplicar Cambios con IA", key=f"apply_ai_{i}") and api_key and selected_model_id:
+                    if st.button("🤖 Aplicar Cambios con IA", key=f"apply_ai_{i}") and api_key:
                         if not cambios.strip():
                             st.error("Por favor, describe los cambios.")
                         else:
-                            with st.spinner("Aplicando cambios..."):
-                                capitulo_modificado = modificar_capitulo(
-                                    contenido_capitulo,
-                                    st.session_state.titulo_libro,
-                                    i + 1,
-                                    titulo_capitulo,
-                                    st.session_state.propuesta,
-                                    cambios,
-                                    api_key,
-                                    selected_model_id
-                                )
-                                if capitulo_modificado:
-                                    st.session_state.capitulos[i] = capitulo_modificado
-                                    st.session_state.pidiendo_cambios_capitulo_idx = -1
-                                    guardar_progreso(st.session_state.to_dict())
-                                    st.success("Capítulo modificado correctamente.")
-                                    st.rerun()
+                            placeholder = st.empty()
+                            full_response = ""
+                            stream = modificar_capitulo(
+                                contenido_capitulo,
+                                st.session_state.titulo_libro,
+                                i + 1,
+                                titulo_capitulo,
+                                st.session_state.propuesta,
+                                cambios,
+                                api_key
+                            )
+                            if stream:
+                                with placeholder.container():
+                                    st.write("Aplicando cambios...")
+                                    for chunk in stream:
+                                        content = chunk.text or ""
+                                        full_response += content
+                                        st.markdown(full_response + "▌")
+                                placeholder.markdown(full_response)
+                                st.session_state.capitulos[i] = full_response
+                                st.session_state.pidiendo_cambios_capitulo_idx = -1
+                                guardar_progreso(st.session_state.to_dict())
+                                st.success("Capítulo modificado correctamente.")
+                                st.rerun()
                     if st.button("❌ Cancelar Solicitud de Cambios", key=f"cancel_ai_{i}"):
                         st.session_state.pidiendo_cambios_capitulo_idx = -1
                         st.rerun()
                 
-                # Modo de Visualización Normal
                 else:
-                    with st.expander(f"Ver contenido del Capítulo {i+1}", expanded=(i == st.session_state.capitulo_actual)):
+                    with st.expander(f"Ver contenido del Capítulo {i+1}", expanded=(i == st.session_state.capitulo_actual - 1)):
                         st.markdown(contenido_capitulo)
                     
-                    # Botones de acción para el capítulo
                     col_regenerar, col_cambios, col_editar = st.columns(3)
                     with col_regenerar:
-                        if st.button("🔄 Regenerar", key=f"regenerar_{i}") and api_key and selected_model_id:
+                        if st.button("🔄 Regenerar", key=f"regenerar_{i}") and api_key:
                             with st.spinner("Regenerando capítulo..."):
-                                # Crear lista de capítulos anteriores para contexto
-                                capitulos_previos = st.session_state.capitulos[:i] + st.session_state.capitulos[i+1:]
-                                nuevo_capitulo = generar_capitulo(
+                                capitulos_previos = "\n\n".join(st.session_state.capitulos[:i] + st.session_state.capitulos[i+1:])
+                                placeholder = st.empty()
+                                full_response = ""
+                                stream = generar_capitulo(
                                     st.session_state.titulo_libro,
                                     i + 1,
                                     titulo_capitulo,
                                     st.session_state.propuesta,
                                     api_key,
-                                    selected_model_id,
-                                    "\n\n".join(capitulos_previos)
+                                    capitulos_previos
                                 )
-                                if nuevo_capitulo:
-                                    st.session_state.capitulos[i] = nuevo_capitulo
+                                if stream:
+                                    with placeholder.container():
+                                        st.write("Regenerando capítulo...")
+                                        for chunk in stream:
+                                            content = chunk.text or ""
+                                            full_response += content
+                                            st.markdown(full_response + "▌")
+                                    placeholder.markdown(full_response)
+                                    st.session_state.capitulos[i] = full_response
                                     guardar_progreso(st.session_state.to_dict())
                                     st.success(f"Capítulo {i + 1} regenerado. Revisa la nueva versión.")
                                     st.rerun()
@@ -576,33 +523,37 @@ if st.session_state.tabla_contenidos and "tabla_aprobada" in st.session_state an
                             st.session_state.editando_capitulo_idx = i
                             st.rerun()
 
-            # Si el capítulo no existe y es el siguiente en la lista, mostrar botón para generarlo
             elif i == st.session_state.capitulo_actual:
                 st.subheader(f"Capítulo {i+1}: {titulo_capitulo}")
-                if st.button(f"Generar Capítulo {i+1}", key=f"generar_{i}") and api_key and selected_model_id:
-                    with st.spinner(f"Escribiendo capítulo {i+1}..."):
-                        capitulos_previos = "\n\n".join(st.session_state.capitulos)
-                        nuevo_capitulo = generar_capitulo(
-                            st.session_state.titulo_libro,
-                            i + 1,
-                            titulo_capitulo,
-                            st.session_state.propuesta,
-                            api_key,
-                            selected_model_id,
-                            capitulos_previos
-                        )
-                        if nuevo_capitulo:
-                            st.session_state.capitulos.append(nuevo_capitulo)
-                            st.session_state.capitulo_actual += 1
-                            guardar_progreso(st.session_state.to_dict())
-                            st.success(f"Capítulo {i + 1} generado. Ya puedes editarlo si lo deseas.")
-                            st.rerun()
+                if st.button(f"Generar Capítulo {i+1}", key=f"generar_{i}") and api_key:
+                    placeholder = st.empty()
+                    full_response = ""
+                    capitulos_previos = "\n\n".join(st.session_state.capitulos)
+                    stream = generar_capitulo(
+                        st.session_state.titulo_libro,
+                        i + 1,
+                        titulo_capitulo,
+                        st.session_state.propuesta,
+                        api_key,
+                        capitulos_previos
+                    )
+                    if stream:
+                        with placeholder.container():
+                            st.write(f"Escribiendo capítulo {i+1}...")
+                            for chunk in stream:
+                                content = chunk.text or ""
+                                full_response += content
+                                st.markdown(full_response + "▌")
+                        placeholder.markdown(full_response)
+                        st.session_state.capitulos.append(full_response)
+                        st.session_state.capitulo_actual += 1
+                        guardar_progreso(st.session_state.to_dict())
+                        st.success(f"Capítulo {i + 1} generado. Ya puedes editarlo si lo deseas.")
+                        st.rerun()
             else:
-                # Capítulos futuros aún no generados
                 st.subheader(f"Capítulo {i+1}: {titulo_capitulo} (Pendiente)")
                 st.info("Este capítulo se generará cuando se completen los anteriores.")
 
-        # Botón para finalizar el libro si todos los capítulos están generados
         if st.session_state.capitulo_actual == len(titulos_capitulos):
             st.markdown("---")
             st.success("¡Todos los capítulos han sido generados!")
@@ -622,4 +573,4 @@ if st.session_state.tabla_contenidos and "tabla_aprobada" in st.session_state an
             st.markdown(crear_enlace_descarga(contenido_md, nombre_archivo), unsafe_allow_html=True)
 
 st.markdown("---")
-st.markdown("Creado con Streamlit y OpenRouter API. Todos los derechos reservados.")
+st.markdown("Creado con Streamlit y la API de Gemini. Todos los derechos reservados.")
