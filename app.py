@@ -61,6 +61,7 @@ def capitalizar_titulo_espanol(titulo):
                 palabras[i] = palabras[i].capitalize()
     return " ".join(palabras)
 
+# --- FUNCIÓN CORREGIDA ---
 # Función para llamar a la API de OpenRouter
 def llamar_api_openrouter(mensaje, api_key, model="openai/gpt-4o-mini"):
     try:
@@ -80,9 +81,9 @@ def llamar_api_openrouter(mensaje, api_key, model="openai/gpt-4o-mini"):
                         "content": "Eres un asistente experto en escritura y edición de libros. Todas tus respuestas deben estar en español. Sigue estrictamente las instrucciones proporcionadas."
                     },
                     {
-                        "role": "user": mensaje
-                   
-                        "content }
+                        "role": "user",
+                        "content": mensaje
+                    }
                 ],
             })
         )
