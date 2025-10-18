@@ -81,7 +81,7 @@ def llamar_api_openrouter(mensaje, api_key, model="openai/gpt-4o-mini"):
                     },
                     {
                         "role": "user": mensaje
-                   ",
+                   
                         "content }
                 ],
             })
