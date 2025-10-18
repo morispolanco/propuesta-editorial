@@ -20,7 +20,6 @@ def contar_palabras(texto):
     """Cuenta el número de palabras en un texto."""
     if not texto:
         return 0
-    # Eliminar caracteres de nueva línea para no contarlos como palabras
     texto_limpio = texto.replace('\n', ' ')
     return len(texto_limpio.split())
 
@@ -193,7 +192,6 @@ def modificar_capitulo(contenido_actual, titulo_libro, num_capitulo, titulo_capi
     respuesta = llamar_api_openrouter(prompt, api_key, model)
     return respuesta
 
-# --- FUNCIÓN MODIFICADA ---
 # Función para generar un capítulo
 def generar_capitulo(titulo_libro, num_capitulo, titulo_capitulo, propuesta, api_key, model, capitulos_previos=""):
     prompt = f"""
@@ -221,6 +219,7 @@ def generar_capitulo(titulo_libro, num_capitulo, titulo_capitulo, propuesta, api
     respuesta = llamar_api_openrouter(prompt, api_key, model)
     return respuesta
 
+# --- FUNCIÓN DE GUARDADO MODIFICADA ---
 # Función para guardar progreso
 def guardar_progreso(datos):
     if not os.path.exists("proyectos_guardados"):
@@ -232,6 +231,8 @@ def guardar_progreso(datos):
     with open(nombre_archivo, "w", encoding="utf-8") as f:
         json.dump(datos, f, ensure_ascii=False, indent=2)
     
+    # --- NUEVO: Notificación de guardado ---
+    st.toast("Progreso guardado automáticamente.", icon="💾")
     return nombre_archivo
 
 # Función para cargar progreso
@@ -372,7 +373,6 @@ if st.session_state.tabla_contenidos:
     st.header("2. Revisión de la Tabla de Contenidos")
     st.subheader(f"Título Propuesto: {st.session_state.titulo_libro}")
 
-    # --- LÓGICA MODIFICADA PARA LA ESTIMACIÓN ---
     lineas_toc = st.session_state.tabla_contenidos.split('\n')
     num_capitulos = len([linea for linea in lineas_toc if re.match(r'^\d+\.\s+(.+)$', linea.strip())])
     if num_capitulos > 0:
@@ -457,9 +457,10 @@ if st.session_state.tabla_contenidos:
                 st.session_state.pedir_cambios = False
                 st.rerun()
 
+# --- SECCIÓN 3 MODIFICADA PARA EDICIÓN NO LINEAL ---
 # Sección 3: Generación y Revisión de Capítulos
 if st.session_state.tabla_contenidos and "tabla_aprobada" in st.session_state and st.session_state.tabla_aprobada:
-    st.header("3. Generación y Revisión de Capítulos")
+    st.header("3. Gestión de Capítulos")
     
     lineas = st.session_state.tabla_contenidos.split('\n')
     titulos_capitulos = []
@@ -475,70 +476,47 @@ if st.session_state.tabla_contenidos and "tabla_aprobada" in st.session_state an
         st.progress(st.session_state.capitulo_actual / len(titulos_capitulos))
         st.write(f"Progreso: {st.session_state.capitulo_actual} de {len(titulos_capitulos)} capítulos completados.")
         
-        # Mostrar capítulos ya generados
-        for i, capitulo_content in enumerate(st.session_state.capitulos):
-            with st.expander(f"Capítulo {i+1}: {titulos_capitulos[i]} ({contar_palabras(capitulo_content)} palabras)", expanded=False):
-                st.markdown(capitulo_content)
-
-        if st.session_state.capitulo_actual < len(titulos_capitulos):
-            capitulo_idx = st.session_state.capitulo_actual
-            titulo_capitulo_actual = titulos_capitulos[capitulo_idx]
+        # Iterar sobre todos los capítulos para mostrar su estado
+        for i, titulo_capitulo in enumerate(titulos_capitulos):
+            st.markdown(f"---")
             
-            if len(st.session_state.capitulos) <= capitulo_idx:
-                st.subheader(f"Generar Capítulo {capitulo_idx + 1}")
-                if st.button(f"Generar Capítulo {capitulo_idx + 1}") and api_key and selected_model_id:
-                    with st.spinner(f"Escribiendo capítulo {capitulo_idx + 1}..."):
-                        capitulos_previos = "\n\n".join(st.session_state.capitulos[-2:])
-                        nuevo_capitulo = generar_capitulo(
-                            st.session_state.titulo_libro,
-                            capitulo_idx + 1,
-                            titulo_capitulo_actual,
-                            st.session_state.propuesta,
-                            api_key,
-                            selected_model_id,
-                            capitulos_previos
-                        )
-                        if nuevo_capitulo:
-                            st.session_state.capitulos.append(nuevo_capitulo)
-                            guardar_progreso(st.session_state.to_dict())
-                            st.success(f"Capítulo {capitulo_idx + 1} generado. Revisa y apruébalo para continuar.")
-                            st.rerun()
-            
-            else:
-                st.subheader(f"Revisar Capítulo {capitulo_idx + 1}: {titulo_capitulo_actual}")
-                contenido_capitulo = st.session_state.capitulos[capitulo_idx]
-                
-                # --- LÓGICA MODIFICADA PARA EL CONTADOR ---
+            # Si el capítulo ya existe, mostrarlo y sus opciones
+            if i < len(st.session_state.capitulos):
+                contenido_capitulo = st.session_state.capitulos[i]
                 word_count = contar_palabras(contenido_capitulo)
+                
+                st.subheader(f"Capítulo {i+1}: {titulo_capitulo}")
                 st.write(f"**Palabras generadas:** {word_count} (Objetivo: 2000-2500)")
 
-                if st.session_state.editando_capitulo_idx == capitulo_idx:
+                # Modo de Edición Manual
+                if st.session_state.editando_capitulo_idx == i:
                     contenido_editado = st.text_area(
                         "Edita el contenido del capítulo:",
                         value=contenido_capitulo,
                         height=500,
-                        key=f"editor_capitulo_{capitulo_idx}"
+                        key=f"editor_capitulo_{i}"
                     )
                     col_save, col_cancel = st.columns(2)
                     with col_save:
-                        if st.button("💾 Guardar Cambios Manuales"):
-                            st.session_state.capitulos[capitulo_idx] = contenido_editado
+                        if st.button("💾 Guardar Cambios Manuales", key=f"save_manual_{i}"):
+                            st.session_state.capitulos[i] = contenido_editado
                             st.session_state.editando_capitulo_idx = -1
                             guardar_progreso(st.session_state.to_dict())
                             st.success("Cambios guardados correctamente.")
                             st.rerun()
                     with col_cancel:
-                        if st.button("❌ Cancelar Edición"):
+                        if st.button("❌ Cancelar Edición", key=f"cancel_manual_{i}"):
                             st.session_state.editando_capitulo_idx = -1
                             st.rerun()
                 
-                elif st.session_state.pidiendo_cambios_capitulo_idx == capitulo_idx:
+                # Modo de Pedir Cambios con IA
+                elif st.session_state.pidiendo_cambios_capitulo_idx == i:
                     cambios = st.text_area(
                         "Describe los cambios que quieres que la IA realice en este capítulo:",
                         height=150,
-                        key=f"cambios_capitulo_{capitulo_idx}"
+                        key=f"cambios_capitulo_{i}"
                     )
-                    if st.button("🤖 Aplicar Cambios con IA") and api_key and selected_model_id:
+                    if st.button("🤖 Aplicar Cambios con IA", key=f"apply_ai_{i}") and api_key and selected_model_id:
                         if not cambios.strip():
                             st.error("Por favor, describe los cambios.")
                         else:
@@ -546,65 +524,88 @@ if st.session_state.tabla_contenidos and "tabla_aprobada" in st.session_state an
                                 capitulo_modificado = modificar_capitulo(
                                     contenido_capitulo,
                                     st.session_state.titulo_libro,
-                                    capitulo_idx + 1,
-                                    titulo_capitulo_actual,
+                                    i + 1,
+                                    titulo_capitulo,
                                     st.session_state.propuesta,
                                     cambios,
                                     api_key,
                                     selected_model_id
                                 )
                                 if capitulo_modificado:
-                                    st.session_state.capitulos[capitulo_idx] = capitulo_modificado
+                                    st.session_state.capitulos[i] = capitulo_modificado
                                     st.session_state.pidiendo_cambios_capitulo_idx = -1
                                     guardar_progreso(st.session_state.to_dict())
                                     st.success("Capítulo modificado correctamente.")
                                     st.rerun()
-                    if st.button("❌ Cancelar Solicitud de Cambios"):
+                    if st.button("❌ Cancelar Solicitud de Cambios", key=f"cancel_ai_{i}"):
                         st.session_state.pidiendo_cambios_capitulo_idx = -1
                         st.rerun()
-
+                
+                # Modo de Visualización Normal
                 else:
-                    with st.expander(f"Ver contenido del Capítulo {capitulo_idx + 1}", expanded=True):
+                    with st.expander(f"Ver contenido del Capítulo {i+1}", expanded=(i == st.session_state.capitulo_actual)):
                         st.markdown(contenido_capitulo)
                     
-                    col_aprobar, col_regenerar, col_cambios, col_editar = st.columns(4)
-                    with col_aprobar:
-                        if st.button("✅ Aprobar y Continuar", key=f"aprobar_{capitulo_idx}"):
-                            st.session_state.capitulo_actual += 1
-                            st.session_state.editando_capitulo_idx = -1
-                            st.session_state.pidiendo_cambios_capitulo_idx = -1
-                            guardar_progreso(st.session_state.to_dict())
-                            st.success(f"Capítulo {capitulo_idx + 1} aprobado.")
-                            st.rerun()
+                    # Botones de acción para el capítulo
+                    col_regenerar, col_cambios, col_editar = st.columns(3)
                     with col_regenerar:
-                        if st.button("🔄 Regenerar", key=f"regenerar_{capitulo_idx}") and api_key and selected_model_id:
+                        if st.button("🔄 Regenerar", key=f"regenerar_{i}") and api_key and selected_model_id:
                             with st.spinner("Regenerando capítulo..."):
-                                capitulos_previos = "\n\n".join(st.session_state.capitulos[:capitulo_idx] + st.session_state.capitulos[capitulo_idx+1:])
+                                # Crear lista de capítulos anteriores para contexto
+                                capitulos_previos = st.session_state.capitulos[:i] + st.session_state.capitulos[i+1:]
                                 nuevo_capitulo = generar_capitulo(
                                     st.session_state.titulo_libro,
-                                    capitulo_idx + 1,
-                                    titulo_capitulo_actual,
+                                    i + 1,
+                                    titulo_capitulo,
                                     st.session_state.propuesta,
                                     api_key,
                                     selected_model_id,
-                                    capitulos_previos
+                                    "\n\n".join(capitulos_previos)
                                 )
                                 if nuevo_capitulo:
-                                    st.session_state.capitulos[capitulo_idx] = nuevo_capitulo
+                                    st.session_state.capitulos[i] = nuevo_capitulo
                                     guardar_progreso(st.session_state.to_dict())
-                                    st.success(f"Capítulo {capitulo_idx + 1} regenerado. Revisa la nueva versión.")
+                                    st.success(f"Capítulo {i + 1} regenerado. Revisa la nueva versión.")
                                     st.rerun()
                     with col_cambios:
-                        if st.button("✏️ Pedir Cambios", key=f"pedir_cambios_{capitulo_idx}"):
-                            st.session_state.pidiendo_cambios_capitulo_idx = capitulo_idx
+                        if st.button("✏️ Pedir Cambios", key=f"pedir_cambios_{i}"):
+                            st.session_state.pidiendo_cambios_capitulo_idx = i
                             st.rerun()
                     with col_editar:
-                        if st.button("🖊️ Editar Manualmente", key=f"editar_{capitulo_idx}"):
-                            st.session_state.editando_capitulo_idx = capitulo_idx
+                        if st.button("🖊️ Editar Manualmente", key=f"editar_{i}"):
+                            st.session_state.editando_capitulo_idx = i
                             st.rerun()
 
-        else:
-            st.success("¡Todos los capítulos han sido generados y aprobados!")
+            # Si el capítulo no existe y es el siguiente en la lista, mostrar botón para generarlo
+            elif i == st.session_state.capitulo_actual:
+                st.subheader(f"Capítulo {i+1}: {titulo_capitulo}")
+                if st.button(f"Generar Capítulo {i+1}", key=f"generar_{i}") and api_key and selected_model_id:
+                    with st.spinner(f"Escribiendo capítulo {i+1}..."):
+                        capitulos_previos = "\n\n".join(st.session_state.capitulos)
+                        nuevo_capitulo = generar_capitulo(
+                            st.session_state.titulo_libro,
+                            i + 1,
+                            titulo_capitulo,
+                            st.session_state.propuesta,
+                            api_key,
+                            selected_model_id,
+                            capitulos_previos
+                        )
+                        if nuevo_capitulo:
+                            st.session_state.capitulos.append(nuevo_capitulo)
+                            st.session_state.capitulo_actual += 1
+                            guardar_progreso(st.session_state.to_dict())
+                            st.success(f"Capítulo {i + 1} generado. Ya puedes editarlo si lo deseas.")
+                            st.rerun()
+            else:
+                # Capítulos futuros aún no generados
+                st.subheader(f"Capítulo {i+1}: {titulo_capitulo} (Pendiente)")
+                st.info("Este capítulo se generará cuando se completen los anteriores.")
+
+        # Botón para finalizar el libro si todos los capítulos están generados
+        if st.session_state.capitulo_actual == len(titulos_capitulos):
+            st.markdown("---")
+            st.success("¡Todos los capítulos han sido generados!")
             
             st.header("4. Exportación del Libro")
             
