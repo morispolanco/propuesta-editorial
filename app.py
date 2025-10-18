@@ -184,7 +184,7 @@ def modificar_capitulo(contenido_actual, titulo_libro, num_capitulo, titulo_capi
     Por favor, reescribe el capítulo aplicando los cambios solicitados.
     
     Requisitos:
-    - Mantén la extensión del capítulo entre 1200 y 1500 palabras.
+    - Mantén la extensión del capítulo entre 2000 y 2500 palabras.
     - El contenido modificado debe ser coherente con el resto del libro.
     - Si incluyes citas, estas deben ser reales y verificables.
     - **CRÍTICO: Asegúrate de que el capítulo esté completo y no termine a mitad de una frase o idea. La respuesta debe ser el capítulo completo, desde el principio hasta el final, sin truncamientos.**
@@ -193,6 +193,7 @@ def modificar_capitulo(contenido_actual, titulo_libro, num_capitulo, titulo_capi
     respuesta = llamar_api_openrouter(prompt, api_key, model)
     return respuesta
 
+# --- FUNCIÓN MODIFICADA ---
 # Función para generar un capítulo
 def generar_capitulo(titulo_libro, num_capitulo, titulo_capitulo, propuesta, api_key, model, capitulos_previos=""):
     prompt = f"""
@@ -204,7 +205,7 @@ def generar_capitulo(titulo_libro, num_capitulo, titulo_capitulo, propuesta, api
     {propuesta}
     
     Requisitos:
-    - El capítulo debe tener entre 1200 y 1500 palabras.
+    - El capítulo debe tener entre 2000 y 2500 palabras.
     - El contenido debe ser coherente con la propuesta editorial y el título del capítulo.
     - Si incluyes citas, estas deben ser reales y verificables. No inventes citas.
     - Mantén un estilo consistente con el resto del libro.
@@ -371,12 +372,12 @@ if st.session_state.tabla_contenidos:
     st.header("2. Revisión de la Tabla de Contenidos")
     st.subheader(f"Título Propuesto: {st.session_state.titulo_libro}")
 
-    # --- NUEVO: ESTIMACIÓN DE PALABRAS TOTALES ---
+    # --- LÓGICA MODIFICADA PARA LA ESTIMACIÓN ---
     lineas_toc = st.session_state.tabla_contenidos.split('\n')
     num_capitulos = len([linea for linea in lineas_toc if re.match(r'^\d+\.\s+(.+)$', linea.strip())])
     if num_capitulos > 0:
-        min_palabras_totales = num_capitulos * 1200
-        max_palabras_totales = num_capitulos * 1500
+        min_palabras_totales = num_capitulos * 2000
+        max_palabras_totales = num_capitulos * 2500
         st.info(f"Se estima que el libro tendrá entre **{min_palabras_totales:,} y {max_palabras_totales:,} palabras** en {num_capitulos} capítulos.")
     
     st.text_area("Tabla de Contenidos:", st.session_state.tabla_contenidos, height=300)
@@ -507,9 +508,9 @@ if st.session_state.tabla_contenidos and "tabla_aprobada" in st.session_state an
                 st.subheader(f"Revisar Capítulo {capitulo_idx + 1}: {titulo_capitulo_actual}")
                 contenido_capitulo = st.session_state.capitulos[capitulo_idx]
                 
-                # --- NUEVO: MOSTRAR CONTADOR DE PALABRAS DEL CAPÍTULO ---
+                # --- LÓGICA MODIFICADA PARA EL CONTADOR ---
                 word_count = contar_palabras(contenido_capitulo)
-                st.write(f"**Palabras generadas:** {word_count} (Objetivo: 1200-1500)")
+                st.write(f"**Palabras generadas:** {word_count} (Objetivo: 2000-2500)")
 
                 if st.session_state.editando_capitulo_idx == capitulo_idx:
                     contenido_editado = st.text_area(
