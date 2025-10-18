@@ -1,7 +1,6 @@
 import streamlit as st
 import requests
 import json
-import time
 import os
 import re
 from datetime import datetime
@@ -15,6 +14,41 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# --- NUEVA FUNCIÓN PARA OBTENER MODELOS GRATUITOS ---
+@st.cache_data
+def obtener_modelos_gratis(api_key):
+    """
+    Obtiene la lista de modelos gratuitos disponibles en OpenRouter.
+    Utiliza caché para no hacer la llamada a la API en cada interacción.
+    """
+    if not api_key:
+        return None
+    
+    try:
+        response = requests.get(
+            url="https://openrouter.ai/api/v1/models",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+            }
+        )
+        
+        if response.status_code == 200:
+            models_data = response.json()
+            modelos_gratis = {}
+            for model in models_data.get("data", []):
+                # Un modelo es gratuito si el precio de prompt y completion es 0
+                pricing = model.get("pricing", {})
+                if pricing.get("prompt") == "0" and pricing.get("completion") == "0":
+                    # Usamos el nombre para mostrar y el ID para la llamada a la API
+                    modelos_gratis[model["name"]] = model["id"]
+            return modelos_gratis
+        else:
+            st.sidebar.warning(f"No se pudieron cargar los modelos: {response.status_code}")
+            return None
+    except Exception as e:
+        st.sidebar.warning(f"Error al conectar con OpenRouter para obtener modelos: {str(e)}")
+        return None
 
 # Función para capitalizar títulos en español
 def capitalizar_titulo_espanol(titulo):
@@ -46,9 +80,9 @@ def llamar_api_openrouter(mensaje, api_key, model="openai/gpt-4o-mini"):
                         "content": "Eres un asistente experto en escritura y edición de libros. Todas tus respuestas deben estar en español. Sigue estrictamente las instrucciones proporcionadas."
                     },
                     {
-                        "role": "user",
-                        "content": mensaje
-                    }
+                        "role": "user": mensaje
+                   ",
+                        "content }
                 ],
             })
         )
@@ -63,7 +97,7 @@ def llamar_api_openrouter(mensaje, api_key, model="openai/gpt-4o-mini"):
         return None
 
 # Función para generar tabla de contenidos
-def generar_tabla_contenidos(propuesta, api_key):
+def generar_tabla_contenidos(propuesta, api_key, model):
     prompt = f"""
     Basado en la siguiente propuesta editorial, genera una tabla de contenidos detallada para un libro.
     
@@ -86,12 +120,11 @@ def generar_tabla_contenidos(propuesta, api_key):
     ...
     """
     
-    respuesta = llamar_api_openrouter(prompt, api_key)
+    respuesta = llamar_api_openrouter(prompt, api_key, model)
     return respuesta
 
-# --- NUEVA FUNCIÓN ---
 # Función para modificar la tabla de contenidos según los cambios del usuario
-def modificar_tabla_contenidos(propuesta, tabla_actual, cambios_solicitados, api_key):
+def modificar_tabla_contenidos(propuesta, tabla_actual, cambios_solicitados, api_key, model):
     prompt = f"""
     A continuación, te presento una propuesta editorial y una tabla de contenidos generada previamente.
     
@@ -121,11 +154,41 @@ def modificar_tabla_contenidos(propuesta, tabla_actual, cambios_solicitados, api
     ...
     """
     
-    respuesta = llamar_api_openrouter(prompt, api_key)
+    respuesta = llamar_api_openrouter(prompt, api_key, model)
+    return respuesta
+
+def modificar_capitulo(contenido_actual, titulo_libro, num_capitulo, titulo_capitulo, propuesta, cambios, api_key, model):
+    prompt = f"""
+    Eres un editor experto. A continuación, te presento el capítulo {num_capitulo} de un libro.
+    
+    Título del libro: {titulo_libro}
+    Título del capítulo: {titulo_capitulo}
+    
+    Contenido actual del capítulo:
+    ---
+    {contenido_actual}
+    ---
+    
+    Propuesta editorial original para contexto:
+    {propuesta}
+    
+    El usuario ha solicitado los siguientes cambios para este capítulo:
+    {cambios}
+    
+    Por favor, reescribe el capítulo aplicando los cambios solicitados.
+    
+    Requisitos:
+    - Mantén la extensión del capítulo entre 1200 y 1500 palabras.
+    - El contenido modificado debe ser coherente con el resto del libro.
+    - Si incluyes citas, estas deben ser reales y verificables.
+    - **CRÍTICO: Asegúrate de que el capítulo esté completo y no termine a mitad de una frase o idea. La respuesta debe ser el capítulo completo, desde el principio hasta el final, sin truncamientos.**
+    """
+    
+    respuesta = llamar_api_openrouter(prompt, api_key, model)
     return respuesta
 
 # Función para generar un capítulo
-def generar_capitulo(titulo_libro, num_capitulo, titulo_capitulo, propuesta, api_key, capitulos_previos=""):
+def generar_capitulo(titulo_libro, num_capitulo, titulo_capitulo, propuesta, api_key, model, capitulos_previos=""):
     prompt = f"""
     Escribe el capítulo {num_capitulo} del libro "{titulo_libro}".
     
@@ -148,11 +211,11 @@ def generar_capitulo(titulo_libro, num_capitulo, titulo_capitulo, propuesta, api
     Por favor, escribe el capítulo completo sin truncar.
     """
     
-    respuesta = llamar_api_openrouter(prompt, api_key)
+    respuesta = llamar_api_openrouter(prompt, api_key, model)
     return respuesta
 
 # Función para guardar progreso
-def guardar_progreso(datos, api_key):
+def guardar_progreso(datos):
     if not os.path.exists("proyectos_guardados"):
         os.makedirs("proyectos_guardados")
     
@@ -165,7 +228,7 @@ def guardar_progreso(datos, api_key):
     return nombre_archivo
 
 # Función para cargar progreso
-def cargar_progreso(archivo, api_key):
+def cargar_progreso(archivo):
     try:
         with open(archivo, "r", encoding="utf-8") as f:
             datos = json.load(f)
@@ -200,13 +263,37 @@ st.markdown("Esta aplicación te permite generar libros completos a partir de un
 st.sidebar.header("Configuración")
 api_key = st.sidebar.text_input("Introduce tu API Key de OpenRouter:", type="password")
 
-model_options = [
-    "openai/gpt-4o-mini",
-    "openai/gpt-3.5-turbo",
-    "anthropic/claude-3-haiku",
-    "meta-llama/llama-3-8b-instruct"
-]
-selected_model = st.sidebar.selectbox("Selecciona el modelo:", model_options)
+# --- LÓGICA MODIFICADA PARA LA SELECCIÓN DE MODELO ---
+modelos_dict = None
+selected_model_id = None
+
+if api_key:
+    modelos_dict = obtener_modelos_gratis(api_key)
+    
+    if modelos_dict:
+        # Si se obtuvieron los modelos, mostrar el selector
+        selected_model_name = st.sidebar.selectbox(
+            "Selecciona un modelo gratuito:",
+            options=list(modelos_dict.keys())
+        )
+        # Obtener el ID del modelo seleccionado
+        selected_model_id = modelos_dict[selected_model_name]
+    else:
+        # Si falló la obtención de modelos, mostrar una lista de respaldo
+        st.sidebar.warning("No se pudieron cargar los modelos dinámicamente. Usando lista de respaldo.")
+        fallback_models = {
+            "Meta Llama 3 8B Instruct": "meta-llama/llama-3-8b-instruct:free",
+            "Mistral 7B Instruct": "mistralai/mistral-7b-instruct:free",
+            "OpenAI GPT-3.5 Turbo": "openai/gpt-3.5-turbo"
+        }
+        selected_model_name = st.sidebar.selectbox(
+            "Selecciona un modelo (lista de respaldo):",
+            options=list(fallback_models.keys())
+        )
+        selected_model_id = fallback_models[selected_model_name]
+else:
+    st.sidebar.info("Introduce tu API Key para ver los modelos disponibles.")
+
 
 st.sidebar.subheader("Progreso del proyecto")
 cargar_proyecto = st.sidebar.file_uploader("Cargar proyecto guardado", type=["json"])
@@ -224,13 +311,16 @@ if "capitulo_actual" not in st.session_state:
     st.session_state.capitulo_actual = 0
 if "proyecto_cargado" not in st.session_state:
     st.session_state.proyecto_cargado = False
-# --- NUEVO ESTADO ---
 if "pedir_cambios" not in st.session_state:
     st.session_state.pedir_cambios = False
+if "editando_capitulo_idx" not in st.session_state:
+    st.session_state.editando_capitulo_idx = -1
+if "pidiendo_cambios_capitulo_idx" not in st.session_state:
+    st.session_state.pidiendo_cambios_capitulo_idx = -1
 
 # Cargar proyecto si se selecciona un archivo
 if cargar_proyecto and not st.session_state.proyecto_cargado:
-    datos_proyecto = cargar_proyecto(cargar_proyecto, api_key)
+    datos_proyecto = cargar_progreso(cargar_proyecto)
     if datos_proyecto:
         st.session_state.propuesta = datos_proyecto.get("propuesta", "")
         st.session_state.tabla_contenidos = datos_proyecto.get("tabla_contenidos", "")
@@ -249,13 +339,13 @@ propuesta = st.text_area(
     value=st.session_state.propuesta
 )
 
-if st.button("Analizar Propuesta") and api_key:
+if st.button("Analizar Propuesta") and api_key and selected_model_id:
     if not propuesta.strip():
         st.error("Por favor, introduce una propuesta editorial válida.")
     else:
         st.session_state.propuesta = propuesta
         with st.spinner("Generando tabla de contenidos..."):
-            st.session_state.tabla_contenidos = generar_tabla_contenidos(propuesta, api_key)
+            st.session_state.tabla_contenidos = generar_tabla_contenidos(propuesta, api_key, selected_model_id)
             
             if "Título del libro:" in st.session_state.tabla_contenidos:
                 titulo_match = re.search(r"Título del libro: (.+)", st.session_state.tabla_contenidos)
@@ -269,7 +359,7 @@ if st.button("Analizar Propuesta") and api_key:
                 "capitulos": st.session_state.capitulos,
                 "capitulo_actual": st.session_state.capitulo_actual
             }
-            guardar_progreso(datos_proyecto, api_key)
+            guardar_progreso(datos_proyecto)
         
         st.success("Tabla de contenidos generada correctamente.")
         st.rerun()
@@ -280,20 +370,19 @@ if st.session_state.tabla_contenidos:
     st.subheader(f"Título Propuesto: {st.session_state.titulo_libro}")
     st.text_area("Tabla de Contenidos:", st.session_state.tabla_contenidos, height=300)
     
-    # --- MODIFICACIÓN DE LA INTERFAZ ---
     col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("✅ Aprobar Tabla de Contenidos"):
             st.session_state.tabla_aprobada = True
-            st.session_state.pedir_cambios = False # Resetear el estado de cambios
+            st.session_state.pedir_cambios = False
             st.success("Tabla de contenidos aprobada. Pasa a la siguiente sección para generar los capítulos.")
             st.rerun()
 
     with col2:
-        if st.button("🔄 Regenerar Tabla de Contenidos") and api_key:
-            st.session_state.pedir_cambios = False # Resetear el estado de cambios
+        if st.button("🔄 Regenerar Tabla de Contenidos") and api_key and selected_model_id:
+            st.session_state.pedir_cambios = False
             with st.spinner("Regenerando tabla de contenidos..."):
-                st.session_state.tabla_contenidos = generar_tabla_contenidos(st.session_state.propuesta, api_key)
+                st.session_state.tabla_contenidos = generar_tabla_contenidos(st.session_state.propuesta, api_key, selected_model_id)
                 
                 if "Título del libro:" in st.session_state.tabla_contenidos:
                     titulo_match = re.search(r"Título del libro: (.+)", st.session_state.tabla_contenidos)
@@ -307,7 +396,7 @@ if st.session_state.tabla_contenidos:
                     "capitulos": st.session_state.capitulos,
                     "capitulo_actual": st.session_state.capitulo_actual
                 }
-                guardar_progreso(datos_proyecto, api_key)
+                guardar_progreso(datos_proyecto)
             
             st.success("Tabla de contenidos regenerada.")
             st.rerun()
@@ -317,16 +406,15 @@ if st.session_state.tabla_contenidos:
             st.session_state.pedir_cambios = True
             st.rerun()
 
-    # --- NUEVA SECCIÓN PARA PEDIR CAMBIOS ---
     if st.session_state.pedir_cambios:
         st.markdown("---")
         st.subheader("Solicitar Cambios en la Tabla de Contenidos")
         cambios_solicitados = st.text_area(
-            "Describe los cambios que deseas realizar en la tabla de contenidos. Por ejemplo: 'Quisiera fusionar los capítulos 3 y 4', 'Añade un capítulo sobre la historia de...', 'Cambia el título del capítulo 5 a...'",
+            "Describe los cambios que deseas realizar en la tabla de contenidos.",
             height=150
         )
         
-        if st.button("Aplicar Cambios") and api_key:
+        if st.button("Aplicar Cambios") and api_key and selected_model_id:
             if not cambios_solicitados.strip():
                 st.error("Por favor, describe los cambios que deseas realizar.")
             else:
@@ -335,7 +423,8 @@ if st.session_state.tabla_contenidos:
                         st.session_state.propuesta,
                         st.session_state.tabla_contenidos,
                         cambios_solicitados,
-                        api_key
+                        api_key,
+                        selected_model_id
                     )
                     
                     if "Título del libro:" in st.session_state.tabla_contenidos:
@@ -350,15 +439,15 @@ if st.session_state.tabla_contenidos:
                         "capitulos": st.session_state.capitulos,
                         "capitulo_actual": st.session_state.capitulo_actual
                     }
-                    guardar_progreso(datos_proyecto, api_key)
+                    guardar_progreso(datos_proyecto)
                 
                 st.success("Cambios aplicados correctamente. Revisa la nueva tabla de contenidos.")
-                st.session_state.pedir_cambios = False # Ocultar el área de texto después de aplicar
+                st.session_state.pedir_cambios = False
                 st.rerun()
 
-# Sección 3: Generación de capítulos
+# Sección 3: Generación y Revisión de Capítulos
 if st.session_state.tabla_contenidos and "tabla_aprobada" in st.session_state and st.session_state.tabla_aprobada:
-    st.header("3. Generación de Capítulos")
+    st.header("3. Generación y Revisión de Capítulos")
     
     lineas = st.session_state.tabla_contenidos.split('\n')
     titulos_capitulos = []
@@ -369,46 +458,136 @@ if st.session_state.tabla_contenidos and "tabla_aprobada" in st.session_state an
             titulos_capitulos.append(match.group(1))
     
     if not titulos_capitulos:
-        st.error("No se pudieron extraer los títulos de los capítulos de la tabla de contenidos. Por favor, revisa el formato y regenérala.")
+        st.error("No se pudieron extraer los títulos de los capítulos. Por favor, revisa el formato y regenérala.")
     else:
         st.progress(st.session_state.capitulo_actual / len(titulos_capitulos))
-        st.write(f"Capítulo actual: {st.session_state.capitulo_actual + 1} de {len(titulos_capitulos)}")
+        st.write(f"Progreso: {st.session_state.capitulo_actual} de {len(titulos_capitulos)} capítulos completados.")
         
+        for i, capitulo_content in enumerate(st.session_state.capitulos):
+            with st.expander(f"Capítulo {i+1}: {titulos_capitulos[i]}", expanded=False):
+                st.markdown(capitulo_content)
+
         if st.session_state.capitulo_actual < len(titulos_capitulos):
-            if st.button(f"Generar Capítulo {st.session_state.capitulo_actual + 1}") and api_key:
-                titulo_capitulo = titulos_capitulos[st.session_state.capitulo_actual]
-                
-                capitulos_previos = ""
-                if st.session_state.capitulos:
-                    capitulos_previos = "\n\n".join(st.session_state.capitulos[-2:])
-                
-                with st.spinner(f"Escribiendo capítulo {st.session_state.capitulo_actual + 1}..."):
-                    capitulo = generar_capitulo(
-                        st.session_state.titulo_libro,
-                        st.session_state.capitulo_actual + 1,
-                        titulo_capitulo,
-                        st.session_state.propuesta,
-                        api_key,
-                        capitulos_previos
+            capitulo_idx = st.session_state.capitulo_actual
+            titulo_capitulo_actual = titulos_capitulos[capitulo_idx]
+            
+            if len(st.session_state.capitulos) <= capitulo_idx:
+                st.subheader(f"Generar Capítulo {capitulo_idx + 1}")
+                if st.button(f"Generar Capítulo {capitulo_idx + 1}") and api_key and selected_model_id:
+                    with st.spinner(f"Escribiendo capítulo {capitulo_idx + 1}..."):
+                        capitulos_previos = "\n\n".join(st.session_state.capitulos[-2:])
+                        nuevo_capitulo = generar_capitulo(
+                            st.session_state.titulo_libro,
+                            capitulo_idx + 1,
+                            titulo_capitulo_actual,
+                            st.session_state.propuesta,
+                            api_key,
+                            selected_model_id,
+                            capitulos_previos
+                        )
+                        if nuevo_capitulo:
+                            st.session_state.capitulos.append(nuevo_capitulo)
+                            guardar_progreso(st.session_state.to_dict())
+                            st.success(f"Capítulo {capitulo_idx + 1} generado. Revisa y apruébalo para continuar.")
+                            st.rerun()
+            
+            else:
+                st.subheader(f"Revisar Capítulo {capitulo_idx + 1}: {titulo_capitulo_actual}")
+                contenido_capitulo = st.session_state.capitulos[capitulo_idx]
+
+                if st.session_state.editando_capitulo_idx == capitulo_idx:
+                    contenido_editado = st.text_area(
+                        "Edita el contenido del capítulo:",
+                        value=contenido_capitulo,
+                        height=500,
+                        key=f"editor_capitulo_{capitulo_idx}"
                     )
-                    
-                    if capitulo:
-                        st.session_state.capitulos.append(capitulo)
-                        st.session_state.capitulo_actual += 1
-                        
-                        datos_proyecto = {
-                            "propuesta": st.session_state.propuesta,
-                            "tabla_contenidos": st.session_state.tabla_contenidos,
-                            "titulo_libro": st.session_state.titulo_libro,
-                            "capitulos": st.session_state.capitulos,
-                            "capitulo_actual": st.session_state.capitulo_actual
-                        }
-                        guardar_progreso(datos_proyecto, api_key)
-                        
-                        st.success(f"Capítulo {st.session_state.capitulo_actual} generado correctamente.")
+                    col_save, col_cancel = st.columns(2)
+                    with col_save:
+                        if st.button("💾 Guardar Cambios Manuales"):
+                            st.session_state.capitulos[capitulo_idx] = contenido_editado
+                            st.session_state.editando_capitulo_idx = -1
+                            guardar_progreso(st.session_state.to_dict())
+                            st.success("Cambios guardados correctamente.")
+                            st.rerun()
+                    with col_cancel:
+                        if st.button("❌ Cancelar Edición"):
+                            st.session_state.editando_capitulo_idx = -1
+                            st.rerun()
+                
+                elif st.session_state.pidiendo_cambios_capitulo_idx == capitulo_idx:
+                    cambios = st.text_area(
+                        "Describe los cambios que quieres que la IA realice en este capítulo:",
+                        height=150,
+                        key=f"cambios_capitulo_{capitulo_idx}"
+                    )
+                    if st.button("🤖 Aplicar Cambios con IA") and api_key and selected_model_id:
+                        if not cambios.strip():
+                            st.error("Por favor, describe los cambios.")
+                        else:
+                            with st.spinner("Aplicando cambios..."):
+                                capitulo_modificado = modificar_capitulo(
+                                    contenido_capitulo,
+                                    st.session_state.titulo_libro,
+                                    capitulo_idx + 1,
+                                    titulo_capitulo_actual,
+                                    st.session_state.propuesta,
+                                    cambios,
+                                    api_key,
+                                    selected_model_id
+                                )
+                                if capitulo_modificado:
+                                    st.session_state.capitulos[capitulo_idx] = capitulo_modificado
+                                    st.session_state.pidiendo_cambios_capitulo_idx = -1
+                                    guardar_progreso(st.session_state.to_dict())
+                                    st.success("Capítulo modificado correctamente.")
+                                    st.rerun()
+                    if st.button("❌ Cancelar Solicitud de Cambios"):
+                        st.session_state.pidiendo_cambios_capitulo_idx = -1
                         st.rerun()
+
+                else:
+                    with st.expander(f"Ver contenido del Capítulo {capitulo_idx + 1}", expanded=True):
+                        st.markdown(contenido_capitulo)
+                    
+                    col_aprobar, col_regenerar, col_cambios, col_editar = st.columns(4)
+                    with col_aprobar:
+                        if st.button("✅ Aprobar y Continuar", key=f"aprobar_{capitulo_idx}"):
+                            st.session_state.capitulo_actual += 1
+                            st.session_state.editando_capitulo_idx = -1
+                            st.session_state.pidiendo_cambios_capitulo_idx = -1
+                            guardar_progreso(st.session_state.to_dict())
+                            st.success(f"Capítulo {capitulo_idx + 1} aprobado.")
+                            st.rerun()
+                    with col_regenerar:
+                        if st.button("🔄 Regenerar", key=f"regenerar_{capitulo_idx}") and api_key and selected_model_id:
+                            with st.spinner("Regenerando capítulo..."):
+                                capitulos_previos = "\n\n".join(st.session_state.capitulos[:capitulo_idx] + st.session_state.capitulos[capitulo_idx+1:])
+                                nuevo_capitulo = generar_capitulo(
+                                    st.session_state.titulo_libro,
+                                    capitulo_idx + 1,
+                                    titulo_capitulo_actual,
+                                    st.session_state.propuesta,
+                                    api_key,
+                                    selected_model_id,
+                                    capitulos_previos
+                                )
+                                if nuevo_capitulo:
+                                    st.session_state.capitulos[capitulo_idx] = nuevo_capitulo
+                                    guardar_progreso(st.session_state.to_dict())
+                                    st.success(f"Capítulo {capitulo_idx + 1} regenerado. Revisa la nueva versión.")
+                                    st.rerun()
+                    with col_cambios:
+                        if st.button("✏️ Pedir Cambios", key=f"pedir_cambios_{capitulo_idx}"):
+                            st.session_state.pidiendo_cambios_capitulo_idx = capitulo_idx
+                            st.rerun()
+                    with col_editar:
+                        if st.button("🖊️ Editar Manualmente", key=f"editar_{capitulo_idx}"):
+                            st.session_state.editando_capitulo_idx = capitulo_idx
+                            st.rerun()
+
         else:
-            st.success("¡Todos los capítulos han sido generados!")
+            st.success("¡Todos los capítulos han sido generados y aprobados!")
             
             st.header("4. Exportación del Libro")
             
