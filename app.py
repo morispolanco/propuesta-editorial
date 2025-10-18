@@ -15,7 +15,15 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- NUEVA FUNCIÓN PARA OBTENER MODELOS GRATUITOS ---
+# --- NUEVA FUNCIÓN PARA CONTAR PALABRAS ---
+def contar_palabras(texto):
+    """Cuenta el número de palabras en un texto."""
+    if not texto:
+        return 0
+    # Eliminar caracteres de nueva línea para no contarlos como palabras
+    texto_limpio = texto.replace('\n', ' ')
+    return len(texto_limpio.split())
+
 @st.cache_data
 def obtener_modelos_gratis(api_key):
     """
@@ -37,10 +45,8 @@ def obtener_modelos_gratis(api_key):
             models_data = response.json()
             modelos_gratis = {}
             for model in models_data.get("data", []):
-                # Un modelo es gratuito si el precio de prompt y completion es 0
                 pricing = model.get("pricing", {})
                 if pricing.get("prompt") == "0" and pricing.get("completion") == "0":
-                    # Usamos el nombre para mostrar y el ID para la llamada a la API
                     modelos_gratis[model["name"]] = model["id"]
             return modelos_gratis
         else:
@@ -61,7 +67,6 @@ def capitalizar_titulo_espanol(titulo):
                 palabras[i] = palabras[i].capitalize()
     return " ".join(palabras)
 
-# --- FUNCIÓN CORREGIDA ---
 # Función para llamar a la API de OpenRouter
 def llamar_api_openrouter(mensaje, api_key, model="openai/gpt-4o-mini"):
     try:
@@ -264,7 +269,6 @@ st.markdown("Esta aplicación te permite generar libros completos a partir de un
 st.sidebar.header("Configuración")
 api_key = st.sidebar.text_input("Introduce tu API Key de OpenRouter:", type="password")
 
-# --- LÓGICA MODIFICADA PARA LA SELECCIÓN DE MODELO ---
 modelos_dict = None
 selected_model_id = None
 
@@ -272,15 +276,12 @@ if api_key:
     modelos_dict = obtener_modelos_gratis(api_key)
     
     if modelos_dict:
-        # Si se obtuvieron los modelos, mostrar el selector
         selected_model_name = st.sidebar.selectbox(
             "Selecciona un modelo gratuito:",
             options=list(modelos_dict.keys())
         )
-        # Obtener el ID del modelo seleccionado
         selected_model_id = modelos_dict[selected_model_name]
     else:
-        # Si falló la obtención de modelos, mostrar una lista de respaldo
         st.sidebar.warning("No se pudieron cargar los modelos dinámicamente. Usando lista de respaldo.")
         fallback_models = {
             "Meta Llama 3 8B Instruct": "meta-llama/llama-3-8b-instruct:free",
@@ -369,6 +370,15 @@ if st.button("Analizar Propuesta") and api_key and selected_model_id:
 if st.session_state.tabla_contenidos:
     st.header("2. Revisión de la Tabla de Contenidos")
     st.subheader(f"Título Propuesto: {st.session_state.titulo_libro}")
+
+    # --- NUEVO: ESTIMACIÓN DE PALABRAS TOTALES ---
+    lineas_toc = st.session_state.tabla_contenidos.split('\n')
+    num_capitulos = len([linea for linea in lineas_toc if re.match(r'^\d+\.\s+(.+)$', linea.strip())])
+    if num_capitulos > 0:
+        min_palabras_totales = num_capitulos * 1200
+        max_palabras_totales = num_capitulos * 1500
+        st.info(f"Se estima que el libro tendrá entre **{min_palabras_totales:,} y {max_palabras_totales:,} palabras** en {num_capitulos} capítulos.")
+    
     st.text_area("Tabla de Contenidos:", st.session_state.tabla_contenidos, height=300)
     
     col1, col2, col3 = st.columns(3)
@@ -464,8 +474,9 @@ if st.session_state.tabla_contenidos and "tabla_aprobada" in st.session_state an
         st.progress(st.session_state.capitulo_actual / len(titulos_capitulos))
         st.write(f"Progreso: {st.session_state.capitulo_actual} de {len(titulos_capitulos)} capítulos completados.")
         
+        # Mostrar capítulos ya generados
         for i, capitulo_content in enumerate(st.session_state.capitulos):
-            with st.expander(f"Capítulo {i+1}: {titulos_capitulos[i]}", expanded=False):
+            with st.expander(f"Capítulo {i+1}: {titulos_capitulos[i]} ({contar_palabras(capitulo_content)} palabras)", expanded=False):
                 st.markdown(capitulo_content)
 
         if st.session_state.capitulo_actual < len(titulos_capitulos):
@@ -495,6 +506,10 @@ if st.session_state.tabla_contenidos and "tabla_aprobada" in st.session_state an
             else:
                 st.subheader(f"Revisar Capítulo {capitulo_idx + 1}: {titulo_capitulo_actual}")
                 contenido_capitulo = st.session_state.capitulos[capitulo_idx]
+                
+                # --- NUEVO: MOSTRAR CONTADOR DE PALABRAS DEL CAPÍTULO ---
+                word_count = contar_palabras(contenido_capitulo)
+                st.write(f"**Palabras generadas:** {word_count} (Objetivo: 1200-1500)")
 
                 if st.session_state.editando_capitulo_idx == capitulo_idx:
                     contenido_editado = st.text_area(
