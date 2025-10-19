@@ -75,7 +75,6 @@ def capitalizar_titulo_espanol(titulo):
 
 # --- FUNCIONES DE GENERACIÓN AHORA USAN EL CLIENTE DE LA SESIÓN ---
 def generar_tabla_contenidos(propuesta, client):
-    # ... (el prompt es el mismo)
     prompt = f"""
     Basado en la siguiente propuesta editorial, genera una tabla de contenidos detallada para un libro.
     
@@ -100,7 +99,6 @@ def generar_tabla_contenidos(propuesta, client):
     return llamar_api_gemini(prompt, client)
 
 def modificar_tabla_contenidos(propuesta, tabla_actual, cambios_solicitados, client):
-    # ... (el prompt es el mismo)
     prompt = f"""
     A continuación, te presento una propuesta editorial y una tabla de contenidos generada previamente.
     
@@ -132,7 +130,6 @@ def modificar_tabla_contenidos(propuesta, tabla_actual, cambios_solicitados, cli
     return llamar_api_gemini(prompt, client)
 
 def modificar_capitulo(contenido_actual, titulo_libro, num_capitulo, titulo_capitulo, propuesta, cambios, client):
-    # ... (el prompt es el mismo)
     prompt = f"""
     Eres un editor experto. A continuación, te presento el capítulo {num_capitulo} de un libro.
     
@@ -161,7 +158,6 @@ def modificar_capitulo(contenido_actual, titulo_libro, num_capitulo, titulo_capi
     return llamar_api_gemini(prompt, client)
 
 def generar_capitulo(titulo_libro, num_capitulo, titulo_capitulo, propuesta, client, capitulos_previos=""):
-    # ... (el prompt es el mismo)
     prompt = f"""
     Escribe el capítulo {num_capitulo} del libro "{titulo_libro}".
     
@@ -185,6 +181,7 @@ def generar_capitulo(titulo_libro, num_capitulo, titulo_capitulo, propuesta, cli
     """
     return llamar_api_gemini(prompt, client)
 
+# --- FUNCIÓN DE GUARDADO MODIFICADA ---
 # Función para guardar progreso
 def guardar_progreso(datos):
     if not os.path.exists("proyectos_guardados"):
@@ -193,8 +190,16 @@ def guardar_progreso(datos):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     nombre_archivo = f"proyectos_guardados/proyecto_{timestamp}.json"
     
+    # --- SOLUCIÓN: Filtrar objetos no serializables ---
+    # Crear una copia de los datos para no modificar el original
+    datos_a_guardar = datos.copy()
+    
+    # Eliminar las claves que no son serializables en JSON
+    if 'gemini_client' in datos_a_guardar:
+        del datos_a_guardar['gemini_client']
+    
     with open(nombre_archivo, "w", encoding="utf-8") as f:
-        json.dump(datos, f, ensure_ascii=False, indent=2)
+        json.dump(datos_a_guardar, f, ensure_ascii=False, indent=2)
     
     st.toast("Progreso guardado automáticamente.", icon="💾")
     return nombre_archivo
@@ -290,8 +295,6 @@ propuesta = st.text_area(
     value=st.session_state.propuesta
 )
 
-# --- MODIFICACIÓN EN LA LLAMADA ---
-# Ahora pasamos el cliente de la sesión a la función.
 if st.button("Analizar Propuesta") and st.session_state.gemini_client:
     if not propuesta.strip():
         st.error("Por favor, introduce una propuesta editorial válida.")
